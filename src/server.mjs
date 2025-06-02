@@ -10,22 +10,22 @@ import { uvPath } from '@titaniumnetwork-dev/ultraviolet';
 import fastifyHelmet from '@fastify/helmet';
 import fastifyStatic from '@fastify/static';
 import pageRoutes from './routes.mjs';
-import { readFile } from 'node:fs/promises';
-import path from 'node:path';
-import { paintSource, preloaded404, tryReadFile } from './randomization.mjs';
+import {
+  config,
+  paintSource,
+  randomizeGlobal,
+  preloaded404,
+  tryReadFile,
+} from './randomization.mjs';
 import loadTemplates from './templates.mjs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { existsSync, unlinkSync } from 'node:fs';
 import ecosystem from '../ecosystem.config.js';
 
-const config = Object.freeze(
-    JSON.parse(await readFile(new URL('../config.json', import.meta.url)))
+const ecosystemConfig = Object.freeze(
+    ecosystem.apps.find((app) => app.name === 'HolyUB') || ecosystem.apps[0]
   ),
-  ecosystemConfig = Object.freeze(
-    ecosystem.apps.find((app) => app.name === 'HolyUBLTS') || ecosystem.apps[0]
-  ),
-  { pages, externalPages } = pageRoutes,
-  __dirname = path.resolve();
+  { pages, externalPages, cacheBustList } = pageRoutes;
 
 /* Record the server's location as a URL object, including its host and port.
  * The host can be modified at /src/config.json, whereas the ports can be modified
@@ -39,7 +39,7 @@ const serverUrl = ((base) => {
     base.host = config.host;
   }
   base.port =
-    ecosystemConfig[config.production ? 'env_production' : 'env'].PORT;
+    process.env.PORT || ecosystemConfig[config.production ? 'env_production' : 'env'].PORT;
   return Object.freeze(base);
 })();
 console.log(serverUrl);
@@ -163,7 +163,7 @@ app.register(fastifyStatic, {
   decorateReply: false,
 });
 
-// NEVER commit roms due to piracy concerns
+// You should NEVER commit roms, due to piracy concerns.
 app.register(fastifyStatic, {
   root: fileURLToPath(
     new URL('../views/archive/gfiles/rarch/roms', import.meta.url)
@@ -203,29 +203,25 @@ app.register(fastifyStatic, {
     fileURLToPath(
       new URL(
         // Use the pre-compiled, minified scripts instead, if enabled in config.
-        config.minifyScripts ? '../views/dist/network' : '../views/network',
+        config.minifyScripts ? '../views/dist/uv' : '../views/uv',
         import.meta.url
       )
     ),
     uvPath,
   ],
-  prefix: '/network/',
-  decorateReply: true,
+  prefix: '/uv/',
+  decorateReply: false,
 });
 
-// This combines scripts from the official scramjet repository with local scramjet scripts into
-// one directory path. Local versions of files override the official versions.
 app.register(fastifyStatic, {
-  root: [
-    fileURLToPath(
-      new URL(
-        // Use the pre-compiled, minified scripts instead, if enabled in config.
-        config.minifyScripts ? '../views/dist/worker' : '../views/worker',
-        import.meta.url
-      )
-    ),
-  ],
-  prefix: '/worker/',
+  root: fileURLToPath(
+    new URL(
+      // Use the pre-compiled, minified scripts instead, if enabled in config.
+      config.minifyScripts ? '../views/dist/scram' : '../views/scram',
+      import.meta.url
+    )
+  ),
+  prefix: '/scram/',
   decorateReply: false,
 });
 
@@ -254,10 +250,10 @@ app.register(fastifyStatic, {
   decorateReply: false,
 });
 
-/* If you are trying to add pages or assets in the root folder and 
-NOT entire folders check src/routes.mjs and add it manually. */
-
-/* All website files are stored in the /views directory.
+/* If you are trying to add pages or assets in the root folder and
+ * NOT entire folders, check ./src/routes.mjs and add it manually.
+ *
+ * All website files are stored in the /views directory.
  * This takes one of those files and displays it for a site visitor.
  * Paths like /browsing are converted into paths like /views/pages/surf.html
  * back here. Which path converts to what is defined in routes.mjs.
@@ -318,43 +314,7 @@ app.get('/github/:redirect', (req, reply) => {
   else reply.code(404).type('text/html').send(preloaded404);
 });
 
-const encodingTable = (() => {
-    let yummyOneBytes = '';
-    for (let i = 0; i < 128; i++)
-      if (
-        JSON.stringify(JSON.stringify(String.fromCodePoint(i)).slice(1, -1))
-          .length < 6
-      )
-        yummyOneBytes += String.fromCodePoint(i);
-    return yummyOneBytes;
-  })(),
-  randomValue = crypto
-    .randomUUID()
-    .split('-')
-    .map((gibberish) => {
-      let randomNumber = parseInt(gibberish, 16),
-        output = '';
-      while (randomNumber >= encodingTable.length) {
-        output +=
-          encodingTable[Math.floor(randomNumber) % encodingTable.length];
-        randomNumber = randomNumber / encodingTable.length;
-      }
-      return output + Math.floor(randomNumber);
-    })
-    .join(''),
-  randomizeGlobal = config.randomizeIdentifiers
-    ? (file) =>
-        tryReadFile(file, import.meta.url).replace(
-          /(["'`])\{\{__uv\$config\}\}\1/g,
-          JSON.stringify(randomValue)
-        )
-    : (file) =>
-        tryReadFile(file, import.meta.url).replace(
-          /(["'`])\{\{__uv\$config\}\}\1/g,
-          JSON.stringify('__uv$config')
-        );
-
-app.get('/assets/js/common-1735118314.js', (req, reply) => {
+app.get('/assets/js/' + cacheBustList['common.js'], (req, reply) => {
   reply
     .type('text/javascript')
     .send(
@@ -362,9 +322,9 @@ app.get('/assets/js/common-1735118314.js', (req, reply) => {
         '../views' + (config.minifyScripts ? '/dist' : '') + req.url
       )
     );
-}); 
+});
 
-app.get('/network/:file.js', (req, reply) => {
+app.get('/uv/:file.js', (req, reply) => {
   const destination = existsSync(
     fileURLToPath(new URL('../views' + req.url, import.meta.url))
   )
@@ -376,15 +336,13 @@ app.get('/network/:file.js', (req, reply) => {
       randomizeGlobal(destination).replace(
         /(["'`])\{\{ultraviolet-error\}\}\1/g,
         JSON.stringify(
-          tryReadFile(
-            '../views/pages/proxnav/ultraviolet-error.html',
-            import.meta.url
-          )
+          tryReadFile('../views/' + pages['uverror'], import.meta.url)
         )
       )
     );
 });
 
+// Set an error page for invalid paths outside the query string system.
 app.setNotFoundHandler((req, reply) => {
   reply.code(404).type('text/html').send(preloaded404);
 });
