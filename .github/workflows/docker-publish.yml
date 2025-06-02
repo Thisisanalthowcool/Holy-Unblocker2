@@ -2,7 +2,7 @@ name: Build and Push Docker Image to Docker Hub
 
 on:
   push:
-    branches: [main]  # or your deploy branch
+    branches: [v6.4_production]  # or your deploy branch
 
 jobs:
   build-and-push:
